@@ -4,7 +4,7 @@ import numpy as np
 from fpdf import FPDF
 import base64
 
-# --- 1. DATA LOOKUP (A-G TABLE) ---
+# --- 1. A-G LOOKUP TABLE ---
 lookup_data = {
     'H': [1,2,3,4,5,6,7,8,9,10],
     'H1': [1.6,1.5,1.4,1.4,1.3,1.1,0.9,0.8,0.6,0.5],
@@ -19,93 +19,73 @@ lookup_data = {
 }
 df_lookup = pd.DataFrame(lookup_data)
 
-# --- 2. THE COMPLETE ENGINE ---
-def calculate_engine(row):
+# --- 2. ENGINE ---
+def calculate_master_boq(row):
     n = row["NO_OF_CULVERTS"]
-    VC, TS, BS = row["VC"], row["TS"], row["BS"]
-    L, ROAD_W = row["L"], row["ROAD_W"]
+    VC, TS, BS, SW = row["VC"], row["TS"], row["BS"], row["SW"]
+    L, ROAD_W, MW = row["L"], row["ROAD_W"], row["MW"]
     sel = row["PROT_SEL"]
-    
-    # A. Level-Based Calculations
+
     cushion = row["FRL"] - (row["INVERT"] + VC + TS)
     row["CUSHION"] = cushion
-    row["BL"] = ROAD_W + (row["SLOPE_N"] * row["SLOPE_R"] * cushion)
-    row["OW"] = (row["CELLS"] * L) + (2 * row["SW"]) + ((row["CELLS"]-1) * row["MW"])
+    row["BL"] = ROAD_W + (row["SLOPE_COUNT"] * row["SLOPE_RATIO"] * cushion)
+    row["OW"] = (row["CELLS"] * L) + (2 * SW) + ((row["CELLS"]-1) * MW)
     OW, BL = row["OW"], row["BL"]
 
-    # B. Protection Geometry
     row["PROT_COUNT"] = 4 if row["SIDE_SEL"] == "Both Sides" else 2
     if sel == "Independent Retaining wall":
         row["PROT_HT"] = VC + TS
-        row["PROT_LEN"] = (1.5 * row["PROT_HT"]) - row["SW"]
-    else: # Wing Wall
+        row["PROT_LEN"] = (1.5 * row["PROT_HT"]) - SW
+    elif sel == "Wing Wall + Return Wall":
         row["PROT_HT"] = (VC + TS + 1.0) / 2
         row["PROT_LEN"] = (2 * (VC + TS - 1.0)) / np.cos(np.radians(45))
+    else:
+        row["PROT_HT"] = VC + TS
+        row["PROT_LEN"] = (2 * row["PROT_HT"]) - SW
 
-    # C. Table Lookup
     if sel in ["Independent Retaining wall", "Wing Wall + Return Wall"]:
         h_idx = max(1, min(10, int(round(row["PROT_HT"]))))
         match = df_lookup[df_lookup['H'] == h_idx].iloc[0]
         for p in ['W', 'A', 'B', 'C', 'D', 'E', 'F', 'G']: row[p] = match[p]
     else:
-        row["T_BASE_SLAB"] = 0.25 if row["PROT_HT"] <= 2 else 0.30 if row["PROT_HT"] <= 3 else 0.40
+        row["W"] = OW
+        row["T_BASE_SLAB"] = 0.30
 
-    # D. Final Quantities
-    # Excavation & PCC
     row["EXC"] = (((OW+1)*(BL+1)*(BS+0.15)) + ((row.get("W", 0)+1)*(row["PROT_LEN"]+1)*2.15)*row["PROT_COUNT"]) * n
     row["PCC_BOX"] = ((OW+0.3)*(BL+0.3)*0.1)*n
     row["PCC_PROT"] = ((row.get("W", 0)+0.3)*(row["PROT_LEN"]+0.3)*0.1)*row["PROT_COUNT"]*n
     
-    # RCC Box (Shear Key 1.2m)
     hk = 1.2 - BS
     row["S_KEY"] = ((OW*0.25*hk) + (OW*0.5*0.45*hk)) * 2 * n if row["S_KEY_REQ"] == "Yes" else 0
-    row["RCC_BOX"] = (OW*BL*(TS+BS)*n) + ((2*row["SW"] + (row["CELLS"]-1)*row["MW"])*VC*BL*n) + (0.5*row["H_SIZE"]**2*4*row["CELLS"]*BL*n) + row["S_KEY"]
+    row["RCC_BOX"] = (OW*BL*(TS+BS)*n) + ((2*SW + (row["CELLS"]-1)*MW)*VC*BL*n) + (0.5*row["H_SIZE"]**2*4*row["CELLS"]*BL*n) + row["S_KEY"]
     
-    # Weep Holes & FM
+    if sel in ["Independent Retaining wall", "Wing Wall + Return Wall"]:
+        area_f = (row["A"]*(row["F"]+row["E"])/2) + (row["B"]*row["E"]) + (row["C"]*(row["E"]+row["G"])/2)
+        area_s = ((row["B"]+row["D"])/2)*row["PROT_HT"]
+        row["RCC_PROT"] = (area_f + area_s) * row["PROT_LEN"] * row["PROT_COUNT"] * n
+    else:
+        row["RCC_PROT"] = (row.get("W", OW)*row["PROT_LEN"]*0.3 + 2*row["PROT_HT"]*row["PROT_LEN"]*SW) * row["PROT_COUNT"] * n
+
+    row["BACKFILL"] = ((0.5*(VC+TS+BS)**2*BL)*2*n) + ((0.5*row["PROT_HT"]**2*row["PROT_LEN"])*row["PROT_COUNT"]*n)
+    row["FM"] = ((VC+TS+BS)*0.6*BL*2*n) + (row["PROT_HT"]*0.6*row["PROT_LEN"]*row["PROT_COUNT"]*n)
+    row["WC"] = (row["L"]*row["CELLS"]*BL*0.15)*n
+    row["STEEL"] = (row["RCC_BOX"]*row["ST_BOX"] + row["RCC_PROT"]*row["ST_PROT"])
+    
+    box_w = (L * row["CELLS"]) + (MW * (row["CELLS"]-1))
+    l_c = box_w + (row["PROT_LEN"] * 2 * np.sin(np.radians(45)))
+    apron_area = (((box_w + l_c) / 2) * row["PROT_LEN"]) * 2
+    row["RIGID"] = apron_area * 0.3 * n
+    row["LAUNCH"] = apron_area * 0.45 * n
+    
     def wh(h, l): return (np.floor((h-0.6)/1.0)+1) * (np.floor(l/1.0)+1) if h>0.6 else 0
     row["WEEP"] = (wh(VC, BL)*2 + wh(row["PROT_HT"], row["PROT_LEN"])*row["PROT_COUNT"]) * n
-    row["FM"] = ((VC+TS+BS)*0.6*BL*2*n) + (row["PROT_HT"]*0.6*row["PROT_LEN"]*row["PROT_COUNT"]*n)
-    
-    # Steel
-    row["STEEL"] = (row["RCC_BOX"] * row["STEEL_P"])
+
     return row
 
-# --- 3. MOBILE UI (STREAMLIT) ---
-st.set_page_config(page_title="Culvert BOQ", layout="centered")
-st.title("🏗️ Bridge Culvert BOQ Engine")
-
-with st.form("input_form"):
-    st.subheader("📍 Site Levels")
-    c1, c2 = st.columns(2)
-    frl = c1.number_input("FRL (m)", value=5.0)
-    invert = c2.number_input("Invert Level (m)", value=2.0)
-    road_w = st.number_input("Road Width TCS (m)", value=7.0)
-    
-    st.subheader("📦 Box Geometry")
-    cells = st.number_input("No. of Cells", min_value=1, value=1)
-    l_span = st.number_input("Span L (m)", value=2.0)
-    vc_ht = st.number_input("Height VC (m)", value=2.0)
-    
-    st.subheader("🧱 Thicknesses & Steel")
-    t_top = st.number_input("Top Slab (m)", value=0.25)
-    t_bot = st.number_input("Bottom Slab (m)", value=0.25)
-    t_side = st.number_input("Side Wall (m)", value=0.25)
-    st_p = st.number_input("Steel Ratio (kg/m3)", value=85.0)
-    
-    prot_sel = st.selectbox("Protection", ["Independent Retaining wall", "Wing Wall + Return Wall"])
-    submitted = st.form_submit_button("Generate BOQ")
-
-if submitted:
-    data = {
-        "NO_OF_CULVERTS": 1, "SIDE_SEL": "Both Sides", "PROT_SEL": prot_sel,
-        "ROAD_W": road_w, "FRL": frl, "INVERT": invert, "SLOPE_N": 2, "SLOPE_R": 2.0,
-        "CELLS": cells, "L": l_span, "VC": vc_ht, "TS": t_top, "BS": t_bot, "SW": t_side,
-        "MW": 0.25, "H_SIZE": 0.15, "S_KEY_REQ": "Yes", "STEEL_P": st_p
-    }
-    res = calculate_engine(data)
-    
-    st.success("Report Ready!")
-    st.write(f"**Barrel Length:** {res['BL']:.3f} m")
-    st.write(f"**RCC M35 Box:** {res['RCC_BOX']:.2f} m3")
-    st.write(f"**Total Steel:** {res['STEEL']:.2f} kg")
-    st.write(f"**Weep Holes:** {res['WEEP']:.0f} Nos")
+# --- 3. PDF GENERATOR ---
+def create_pdf(res):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(190, 10, "IIT GUWAHATI - CULVERT BOQ REPORT", ln=True, align='C')
+    pdf.ln(10)
