@@ -127,9 +127,28 @@ def run_engine(row):
     apron_a = 0 if "U-Trough" in sel else ((box_iw + l_base) / 2) * row["P_LEN"] * row["C_COUNT"]
     row["RIGID"], row["LAUNCH"] = apron_a*0.3*n, apron_a*0.45*n
     row["PITCH"] = (np.pi*(row["P_HT"]*2)*np.sqrt(row["P_HT"]**2+(row["P_HT"]*2)**2)/2)*4*0.3*n if sel in ["Independent Retaining wall", "U-Trough Along Alignment"] else 0
-    def wh(h, l): return (np.floor((h-0.6)/1.0)+1) * (np.floor(l/1.0)+1) if h>0.6 else 0
-    row["WEEP"] = (wh(row["VC_INNER"], row["BARREL_L"])*2 + wh(row["P_HT"], row["P_LEN"])*row["P_COUNT"]) * n
-    return row
+    def get_excel_wh_count(height, length):
+        # 0.3m offset from top and 0.3m from bottom = 0.6m total clearance
+        if height > 0.6:
+            # Vertical rows: (Effective Height / 1.0m spacing) + 1
+            # np.floor mimics the discrete step counting in your image
+            rows = np.floor((height - 0.6) / 1.0) + 1
+        else:
+            rows = 0
+            
+        # Horizontal columns: (Length / 1.0m spacing) + 1
+        cols = np.floor(length / 1.0) + 1
+        
+        return rows * cols
+
+    # 1. Abutment (Box Side Walls) -> 2 Walls
+    wh_box = get_excel_wh_count(row["VC_INNER"], row["BARREL_L"]) * 2
+    
+    # 2. Protection Walls (Wing / Independent) -> Uses PROT_COUNT
+    wh_prot = get_excel_wh_count(row["P_HT"], row["P_LEN"]) * row["P_COUNT"]
+    
+    # Final Total for display
+    row["WEEP"] = (wh_box + wh_prot) * n
 
 # --- 3. INTERFACE ---
 st.set_page_config(page_title="Culvert Master", layout="wide")
