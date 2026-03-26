@@ -354,7 +354,7 @@ st.title("🏗️ Bridge Culvert BOQ Master Engine")
 
 with st.sidebar:
     st.header("📋 Configuration")
-    n_culv = st.number_input("Number of Culverts", value=1, min_value=1)
+    n_culv = st.number_input("Number of Culverts", value=1, min_value=1, key="sidebar_n_culv")
     side_sel = st.selectbox("Side Selection", ["Both Sides", "One Side"])
     prot_sel = st.selectbox("Protection Type", ["Independent Retaining wall", "Wing Wall + Return Wall", "U-Trough Wing Wall", "U-Trough Along Alignment"])
     curt_loc = st.selectbox("Curtain Wall Location", ["Both Sides", "U/S Only", "D/S Only"])
