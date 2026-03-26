@@ -288,3 +288,36 @@ if st.button("🚀 Calculate Final BOQ", key="main_btn"):
         ["Weep Holes (100mm)", f"{res['WEEP_NOS']:.0f}", "Nos"]
     ]
     st.table(pd.DataFrame(res_list, columns=["Description", "Quantity", "Unit"]))
+    # --- ADD STARTING HERE ---
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_fill_color(41, 128, 185) 
+    pdf.rect(0, 0, 210, 40, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(190, 20, txt="BRIDGE CULVERT BOQ REPORT", ln=True, align='C')
+    
+    pdf.ln(25); pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(100, 8, " Description", border=1)
+    pdf.cell(50, 8, " Quantity", border=1, align='C')
+    pdf.cell(40, 8, " Unit", border=1, align='C'); pdf.ln()
+    
+    pdf.set_font("Arial", size=9)
+    for row_item in res_list:
+        if row_item[1] != "" and row_item[0] != "---":
+            desc = row_item[0].replace("**", "")
+            pdf.cell(100, 7, f" {desc}", border=1)
+            pdf.cell(50, 7, row_item[1], border=1, align='C')
+            pdf.cell(40, 7, row_item[2], border=1, align='C')
+            pdf.ln()
+    
+    pdf_output = pdf.output(dest='S').encode('latin-1')
+    st.download_button(
+        label="📥 Download Official BOQ Report (PDF)",
+        data=pdf_output,
+        file_name="Culvert_Detailed_BOQ.pdf",
+        mime="application/pdf",
+        key="final_pdf_download"
+    )
+    # --- ADD ENDING HERE
