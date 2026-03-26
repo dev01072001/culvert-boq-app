@@ -78,7 +78,6 @@ def run_engine(row):
         row["C_A_T"] = (ds_a if "D/S" in row["CURT_LOC"] else us_a) * l_base
         row["C_D"] = ds_d if "D/S" in row["CURT_LOC"] else us_d
 
-    # QUANTITIES
     off, poff, tpcc = 1.0, 0.3, 0.1
     row["E_BOX"] = ((row["TRANSVERSE_W"] + off) * (row["BARREL_L"] + off) * (row["T_BOT_SLAB"] + 0.15)) * n
     pw = row["P_AVG_W"] if "U-Trough" in sel else row["W"]
@@ -118,9 +117,17 @@ def run_engine(row):
     row["BF"] = ((0.5*hb**2*row["BARREL_L"]*2) + (0.5*row["P_HT"]**2*row["P_LEN"]*row["P_COUNT"]) + (0.5*1.0**2*1.5*row["P_COUNT"] if "Wing Wall" in sel else 0.0)) * n
     row["FM"] = ((hb*0.6*row["BARREL_L"]*2) + (row["P_HT"]*0.6*row["P_LEN"]*row["P_COUNT"]) + (1.0*0.6*1.5*row["P_COUNT"] if "Wing Wall" in sel else 0.0)) * n
     row["WC"] = (row["L_INNER"]*row["NO_OF_CELLS"]*row["BARREL_L"]*0.15)*n
-    ap_a = 0.0 if "U-Trough" in sel else ((box_iw + l_base) / 2) * row["P_LEN"] * row["C_COUNT"]
-    row["RIGID"], row["LAUNCH"] = ap_a*0.3*n, ap_a*0.45*n
-    row["PITCH"] = (np.pi*(row["P_HT"]*2)*np.sqrt(row["P_HT"]**2+(row["P_HT"]*2)**2)/2)*4*0.3*n if sel in ["Independent Retaining wall", "U-Trough Along Alignment"] else 0.0
+    
+    ap_area = 0.0 if "U-Trough" in sel else ((box_iw + l_base) / 2) * row["P_LEN"] * row["C_COUNT"]
+    row["RIGID"], row["LAUNCH"] = ap_area*0.3*n, ap_area*0.45*n
+    
+    if sel in ["Independent Retaining wall", "U-Trough Along Alignment"]:
+        slant = np.sqrt(row["P_HT"]**2 + (row["P_HT"]*2)**2)
+        row["PITCH"] = (np.pi*(row["P_HT"]*2)*slant/2)*4*0.3*n
+        row["PITCH_FM"] = row["PITCH"]
+    else:
+        row["PITCH"] = 0.0
+        row["PITCH_FM"] = 0.0
     
     def get_wh(h, l):
         rows = np.floor((h - 0.6) / 1.0) + 1 if h > 0.6 else 1.0
@@ -135,16 +142,16 @@ st.title("🏗️ Bridge Culvert BOQ Master Engine")
 
 with st.sidebar:
     st.header("📋 Configuration")
-    n_culv = st.number_input("Number of Culverts", value=1, min_value=1, key="sb_n")
-    side_sel = st.selectbox("Side Selection", ["Both Sides", "One Side"], key="sb_s")
-    prot_sel = st.selectbox("Protection Type", ["Independent Retaining wall", "Wing Wall + Return Wall", "U-Trough Wing Wall", "U-Trough Along Alignment"], key="sb_p")
-    curt_loc = st.selectbox("Curtain Wall Location", ["Both Sides", "U/S Only", "D/S Only"], key="sb_c")
-    sk_req = st.radio("Shear Key Required?", ["Yes", "No"], key="sb_sk")
+    n_culv = st.number_input("Number of Culverts", value=1, min_value=1)
+    side_sel = st.selectbox("Side Selection", ["Both Sides", "One Side"])
+    prot_sel = st.selectbox("Protection Type", ["Independent Retaining wall", "Wing Wall + Return Wall", "U-Trough Wing Wall", "U-Trough Along Alignment"])
+    curt_loc = st.selectbox("Curtain Wall Location", ["Both Sides", "U/S Only", "D/S Only"])
+    sk_req = st.radio("Shear Key Required?", ["Yes", "No"])
 
 c1, c2, c3 = st.columns(3)
 with c1:
     rw, frl, gl = st.number_input("TCS Width (m)", value=7.0), st.number_input("FRL (m)", value=5.0), st.number_input("GL (m)", value=2.0)
-    sl, sr = st.selectbox("Slopes", [0, 1, 2], index=2), st.number_input("Ratio", value=1.5)
+    sl, sr = st.selectbox("Slope Count", [0, 1, 2], index=2), st.number_input("Ratio", value=1.5)
 with c2:
     cl, ln, vc = st.number_input("Cells", value=1), st.number_input("Span L", value=2.0), st.number_input("VC", value=2.0)
     hz = st.number_input("Haunch", value=0.15)
@@ -160,47 +167,54 @@ if st.button("🚀 Generate Final BOQ"):
     col_res, col_img = st.columns([2, 1])
 
     with col_res:
-        st.success("✅ Analysis Complete")
+        st.success("✅ Results Table")
         table = [
             ["--- PROJECT SPECIFICATIONS ---", "", "", ""],
-            ["Final Barrel Length", f"{res['BARREL_L']:.3f}", "m", "Road Width + Slope Adjustments"],
-            ["Total Transverse Width", f"{res['TRANSVERSE_W']:.3f}", "m", "Inner Spans + All Walls"],
-            ["Available Cushion", f"{res['CUSHION']:.3f}", "m", "FRL - (GL + VC + Top Slab)"],
+            ["Final Barrel Length", f"{res['BARREL_L']:.3f}", "m", "Road Width + Slopes"],
+            ["Total Transverse Width", f"{res['TRANSVERSE_W']:.3f}", "m", "Spans + All Walls"],
+            ["Available Cushion", f"{res['CUSHION']:.3f}", "m", "FRL to Top Slab"],
             ["--- EARTHWORK ---", "", "", ""],
             ["Excavation (Box)", f"{res['E_BOX']:.2f}", "m3", "1.0m offset"],
-            ["Excavation (Protection)", f"{res['E_PROT']:.2f}", "m3", "Base logic"],
-            ["Excavation (Return)", f"{res['E_RET']:.2f}", "m3", "3.1x2.5 fixed"],
-            ["Excavation (Scour)", f"{res['E_SCOUR']:.2f}", "m3", "Toe/Curtain footprint"],
+            ["Excavation (Protection)", f"{res['E_PROT']:.2f}", "m3", "Base + offsets"],
+            ["Excavation (Return Walls)", f"{res['E_RET']:.2f}", "m3", "3.1x2.5 fixed"],
+            ["Excavation (Toe & Curtain)", f"{res['E_SCOUR']:.2f}", "m3", "Scour footprint"],
             ["**TOTAL EXCAVATION**", f"{res['GRAND_EXC']:.2f}", "m3", ""],
-            ["--- PCC WORKS ---", "", "", ""],
+            ["--- PCC GRADE M15 ---", "", "", ""],
             ["PCC (Box Foundation)", f"{res['P_BOX']:.2f}", "m3", "300mm offset"],
-            ["PCC (Protection)", f"{res['P_PROT']:.2f}", "m3", "300mm offset"],
-            ["PCC (Return Wall)", f"{res['P_RET']:.2f}", "m3", "Fixed footprint"],
-            ["PCC (Scour Components)", f"{res['P_SCOUR']:.2f}", "m3", "Base components"],
+            ["PCC (Protection Foundation)", f"{res['P_PROT']:.2f}", "m3", "300mm offset"],
+            ["PCC (Return Wall Foundation)", f"{res['P_RET']:.2f}", "m3", "Fixed footprint"],
+            ["PCC (Scour Components)", f"{res['P_SCOUR']:.2f}", "m3", "Toe/Curtain base"],
+            ["**TOTAL PCC M15**", f"{res['GRAND_PCC']:.2f}", "m3", ""],
             ["--- RCC WORKS ---", "", "", ""],
             ["RCC M35 (Box Structure)", f"{res['R_BOX']:.2f}", "m3", "Main barrel"],
             ["RCC M35 (Main Protections)", f"{res['R_PROT']:.2f}", "m3", "Wall stems"],
             ["RCC M35 (Return Walls)", f"{res['R_RET']:.2f}", "m3", "1.0m stem height"],
             ["RCC M25 (Toe Walls)", f"{res['R_M25_TOE']:.2f}", "m3", "0.370 area logic"],
             ["RCC M15 (Curtain Walls)", f"{res['R_M15_CURT']:.2f}", "m3", "0.7m width logic"],
-            ["Steel (Box)", f"{res['S_BOX']:.2f}", "kg", "Ratio applied"],
-            ["Steel (Prot/Return)", f"{res['S_PROT']:.2f}", "kg", "Ratio applied"],
-            ["--- FINISHING ---", "", "", ""],
+            ["--- REINFORCEMENT & FINISH ---", "", "", ""],
+            ["Steel for Box", f"{res['S_BOX']:.2f}", "kg", "Ratio applied"],
+            ["Steel for Protection", f"{res['S_PROT']:.2f}", "kg", "Ratio applied"],
+            ["**GRAND TOTAL STEEL**", f"{res['S_BOX']+res['S_PROT']:.2f}", "kg", ""],
             ["Backfill (1:1 Slope)", f"{res['BF']:.2f}", "m3", "0.5*H^2*L"],
             ["Filter Media", f"{res['FM']:.2f}", "m3", "600mm layer"],
-            ["Weep Holes (100mm PVC)", f"{res['WEEP']:.0f}", "Nos", "Col x Row x Walls"]
+            ["Rigid Apron (300mm)", f"{res['RIGID']:.2f}", "m3", "Floor protection"],
+            ["Launching Apron (450mm)", f"{res['LAUNCH']:.2f}", "m3", "Scour protection"],
+            ["Quadrant Slope Pitching", f"{res['PITCH']:.2f}", "m3", "Slant quadrant logic"],
+            ["Pitching Filter Media", f"{res['PITCH_FM']:.2f}", "m3", "Drainage layer"],
+            ["Weep Holes (100mm PVC)", f"{res['WEEP']:.0f}", "Nos", "Col x Row logic"]
         ]
         st.table(pd.DataFrame(table, columns=["Description", "Quantity", "Unit", "Logic Audit"]))
 
     with col_img:
-        st.info("📦 Structure Preview")
-        st.image("https://www.civilengineersforum.com/wp-content/uploads/2018/01/Box-Culvert-Design.jpg", caption="Typical Box Culvert Detail")
-        st.metric("Barrel Length", f"{res['BARREL_L']:.2f} m")
-        st.metric("Structure Width", f"{res['TRANSVERSE_W']:.2f} m")
+        st.info("📦 Visual Reference")
+        st.image("https://www.civilengineersforum.com/wp-content/uploads/2018/01/Box-Culvert-Design.jpg", caption="Box Culvert Sectional View Detail")
+        st.metric("Final Barrel Length", f"{res['BARREL_L']:.2f} m")
+        st.metric("Total Transverse Width", f"{res['TRANSVERSE_W']:.2f} m")
+        st.metric("Design Cushion", f"{res['CUSHION']:.2f} m")
 
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(190, 10, "BRIDGE CULVERT BOQ REPORT", ln=True, align='C')
     pdf.set_font("Arial", size=8)
     for r in table:
         if r[1] != "":
             pdf.cell(85, 7, r[0].replace("**",""), 1); pdf.cell(25, 7, r[1], 1, 0, 'C'); pdf.cell(20, 7, r[2], 1, 0, 'C'); pdf.cell(60, 7, r[3], 1); pdf.ln()
-    st.download_button("📥 Download PDF", data=pdf.output(dest='S').encode('latin-1'), file_name="Culvert_BOQ.pdf", mime="application/pdf", key="dl")
+    st.download_button("📥 Download PDF Report", data=pdf.output(dest='S').encode('latin-1'), file_name="Culvert_BOQ.pdf", mime="application/pdf", key="dl_pdf")
